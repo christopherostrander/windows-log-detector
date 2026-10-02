@@ -1,0 +1,22 @@
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# VS Code workspace settings
+.vscode/
+
+# Sensitive/local data — do not publish
+.env
+*.evtx
+raw_logs/
+private_logs/
+
+# Large generated output
+output/*.csv
+!output/example_logon_events_report.csv
+
+# Raw Windows Security CSV exports — keep local
+before_security.csv
+after_security.csv

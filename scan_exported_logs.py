@@ -1,3 +1,4 @@
+import argparse
 import csv
 import re
 from collections import Counter
@@ -135,17 +136,66 @@ def print_summary(label, events):
     print(f"Event ID 4624 - successful logons: {counts['4624']}")
     print(f"Event ID 4625 - failed logons:     {counts['4625']}")
 
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        description=(
+            "Compare exported Windows Security CSV logs "
+            "and flag failed-logon activity for review."
+        )
+    )
+
+    parser.add_argument(
+        "--before",
+        type=Path,
+        default=Path("before_security.csv"),
+        help="Baseline Windows Security CSV file."
+    )
+
+    parser.add_argument(
+        "--after",
+        type=Path,
+        default=Path("after_security.csv"),
+        help="Windows Security CSV file collected after testing."
+    )
+
+    parser.add_argument(
+        "--threshold",
+        type=int,
+        default=3,
+        help="Minimum failed-logon count in the after file (default: 3)."
+    )
+
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("output/logon_events_report.csv"),
+        help="Path for the generated CSV report."
+    )
+
+    args = parser.parse_args()
+
+    if args.threshold < 1:
+        parser.error("--threshold must be at least 1")
+
+    for input_path in (args.before, args.after):
+        if not input_path.is_file():
+            parser.error(f"Input file not found: {input_path.resolve()}")
+
+    if args.output.resolve() in {
+        args.before.resolve(),
+        args.after.resolve()
+    }:
+        parser.error("--output must not overwrite either input file")
+
+    return args
+
 
 def main():
-    before_path = Path("before_security.csv")
-    after_path = Path("after_security.csv")
-    output_path = Path("output/logon_events_report.csv")
+    args = parse_arguments()
 
-    for file_path in [before_path, after_path]:
-        if not file_path.exists():
-            print(f"ERROR: File not found: {file_path.resolve()}")
-            print("Make sure the CSV files are in C:\\windows-log-detector.")
-            return
+    before_path = args.before
+    after_path = args.after
+    output_path = args.output
 
     try:
         before_events = read_security_csv(before_path)
@@ -155,7 +205,12 @@ def main():
         return
 
     all_events = before_events + after_events
-    write_events_csv(all_events, output_path)
+
+    try:
+        write_events_csv(all_events, output_path)
+    except (OSError, csv.Error) as error:
+        print(f"ERROR: Could not write the report: {error}")
+        return
 
     print_summary("BEFORE SECURITY LOG", before_events)
     print_summary("AFTER SECURITY LOG", after_events)
@@ -178,22 +233,43 @@ def main():
         for event in after_events
     )
 
-    print("\n=== COMPARISON ===")
-    print(f"New successful-logon events: {after_successful - before_successful}")
-    print(f"New failed-logon events:     {after_failed - before_failed}")
+    print("\n=== COUNT COMPARISON ===")
+    print(
+        "Successful-logon count difference (after - before): "
+        f"{after_successful - before_successful}"
+    )
+    print(
+        "Failed-logon count difference (after - before): "
+        f"{after_failed - before_failed}"
+    )
 
     if after_failed > before_failed:
         print(
-            "\nALERT: The after log contains more failed-logon events "
-            "(Event ID 4625) than the before log."
+            "\n[INFO] The after export contains more failed-logon "
+            "events than the before export."
         )
     else:
         print(
-            "\nNo increase in failed-logon events was detected between "
-            "the two exports."
+            "\n[INFO] No increase in failed-logon count was detected "
+            "between the exports."
         )
 
-    print(f"\nFiltered report saved to:\n{output_path.resolve()}")
+    print("\n=== FAILED-LOGON THRESHOLD CHECK ===")
+    print(f"Configured threshold: {args.threshold}")
+    print(f"Failed logons in after export: {after_failed}")
+
+    if after_failed >= args.threshold:
+        print(
+            "[REVIEW] Failed-logon count reached the configured "
+            "threshold. Review the events for context."
+        )
+    else:
+        print(
+            "[INFO] Failed-logon count is below the "
+            "configured threshold."
+        )
+
+    print(f"\nFiltered event report saved to:\n{output_path.resolve()}")
 
 
 if __name__ == "__main__":

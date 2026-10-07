@@ -15,6 +15,19 @@ The tool compares a baseline ("before") export with an "after" export from a
 controlled VMware Windows 11 lab. It highlights increases in failed logons and
 creates a filtered CSV report for review.
 
+## Features
+
+- Reads exported Windows Security CSV files.
+- Filters successful logons (4624) and failed logons (4625).
+- Displays before/after event counts and count differences.
+- Supports configurable input and output file paths.
+- Supports a configurable failed-logon review threshold.
+- Provides built-in command-line help.
+- Validates missing input files and invalid thresholds.
+- Prevents the report from overwriting either input file.
+- Handles CSV-reading and report-writing errors.
+- Creates a combined filtered CSV event report.
+
 ## Why I Built This
 
 Windows authentication events are valuable to SOC analysts and incident
@@ -67,47 +80,43 @@ Write filtered CSV report and print summary
 
 | Event ID | Meaning | How this project uses it |
 |---|---|---|
-| 4624 | Successful logon | Counts successful authentication activity |
-| 4625 | Failed logon | Counts failed authentication activity and flags increases after testing |
+| 4624 | Successful logon | Counts successful logon events in each export |
+| 4625 | Failed logon | Counts failed logon events and checks the after export against a configurable threshold |
 
-Current detection rule:
+The script performs two checks:
 
-> Alert when the after-test log contains more Event ID 4625 records than the baseline log.
+1. **Count comparison:** Displays the difference between the before and after
+   counts for successful and failed logons. An increase in failed logons
+   produces an informational message.
+2. **Threshold check:** Prints a review message when the failed-logon count
+   in the after export meets or exceeds the configured threshold.
 
-This is a beginner-friendly baseline rule. In a real environment, detections
-would also consider time windows, account names, source IP addresses, logon
-type, expected administrative activity, and asset context.
+The default threshold is 3. For example:
+
+```powershell
+python scan_exported_logs.py --threshold 5
+```
+
+This command triggers a review message if the after export contains at least
+5 failed-logon events.
+
+The threshold applies to the entire after export. It does not currently
+group failures by account, source IP, or time window.
+
+The CSV output contains matching events from both input files. Review
+messages are printed in the terminal; they are not written as separate
+alert records in the CSV.
 
 ## Installation
 
-1. Install Python 3.13 or later.
+1. Install Python. This project was developed and tested with Python 3.13.
 2. Clone this repository.
 3. Open the project folder in VS Code.
 4. Confirm that VS Code has selected a Python interpreter.
-5. Place sanitized CSV files in the project folder or `data/` directory.
-
+5. Place sanitized CSV files in the project folder using the default names
+   `before_security.csv` and `after_security.csv`, or provide their paths
+   with the `--before` and `--after` options.
 No third-party Python packages are required for the CSV version.
-
-## Usage
-
-Run the script from the project directory:
-
-```powershell
-python src\scan_exported_logs.py
-```
-
-The script expects these files:
-
-```text
-before_security.csv
-after_security.csv
-```
-
-It creates this report:
-
-```text
-output\logon_events_report.csv
-```
 
 ## Example Output
 
@@ -122,12 +131,58 @@ Matching logon events: 380
 Event ID 4624 - successful logons: 376
 Event ID 4625 - failed logons:     4
 
-=== COMPARISON ===
-New successful-logon events: 56
-New failed-logon events:     4
+=== COUNT COMPARISON ===
+Successful-logon count difference (after - before): 56
+Failed-logon count difference (after - before): 4
 
-ALERT: The after log contains more failed-logon events (Event ID 4625) than the before log.
+[INFO] The after export contains more failed-logon events than the before export.
+
+=== FAILED-LOGON THRESHOLD CHECK ===
+Configured threshold: 3
+Failed logons in after export: 4
+[REVIEW] Failed-logon count reached the configured threshold. Review the events for context.
 ```
+## Usage
+
+Run commands from the project directory.
+
+### Default settings
+
+```powershell
+python scan_exported_logs.py
+```
+
+By default, the script reads:
+
+- `before_security.csv`
+- `after_security.csv`
+
+It saves the filtered event report to:
+
+- `output/logon_events_report.csv`
+
+The default failed-logon threshold is 3.
+
+### Custom settings
+
+```powershell
+python scan_exported_logs.py --before before_security.csv --after after_security.csv --threshold 5 --output output/custom_report.csv
+```
+
+### Help
+
+```powershell
+python scan_exported_logs.py --help
+```
+
+### Command-line options
+
+| Option | Description | Default |
+|---|---|---|
+| `--before` | Baseline Security-log CSV | `before_security.csv` |
+| `--after` | Security-log CSV collected after testing | `after_security.csv` |
+| `--threshold` | Minimum failed-logon count in the after export that triggers a review message | `3` |
+| `--output` | Filtered CSV report location | `output/logon_events_report.csv` |
 
 ## Limitations
 
@@ -141,6 +196,10 @@ ALERT: The after log contains more failed-logon events (Event ID 4625) than the 
   account, source IP, logon type, or time window.
 - The project uses controlled lab data and is not a replacement for a SIEM,
   EDR, or enterprise incident-response process.
+- Before and after exports may contain overlapping events. The combined
+  report does not currently deduplicate them.
+- Count differences are not proof of newly generated events, especially
+  if the exports cover different time ranges or filters.
 
 ## Planned Improvements
 
@@ -148,7 +207,7 @@ ALERT: The after log contains more failed-logon events (Event ID 4625) than the 
 - Extract account name, source IP, workstation name, and logon type
 - Detect repeated failed logons from one account or source within a time window
 - Add a "failed logon followed by successful logon" correlation rule
-- Add configurable thresholds and severity levels
+- Add severity levels and structured alert records
 - Add JSON output in addition to CSV
 - Add unit tests using sanitized sample logs
 - Add Windows Firewall log parsing for denied connections
@@ -164,13 +223,16 @@ Filtered Event Viewer output from the isolated Windows 11 VM. The log includes c
 
 ### Detector execution
 
-The Python script compares the exported before/after Security-log CSV files and flags increased failed-logon activity.
+The Python script compares before/after Security-log counts and checks
+failed-logon activity against a configurable review threshold.
 
 ![Detector terminal output](assets/screenshots/run-output.png)
 
-### Generated alert report
+### Filtered event report
 
-The tool writes a CSV report that can be reviewed by an analyst or imported into another workflow.
+The tool writes matching successful and failed logon events from both
+exports to a CSV file for analyst review. Threshold review messages appear
+in the terminal rather than as separate records in this report.
 
 ![Generated alert report](assets/screenshots/report-output.png)
 
